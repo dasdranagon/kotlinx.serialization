@@ -251,7 +251,7 @@ internal class JsonReader(private val source: String) {
         // TODO verify that this approach is actually faster
         // Fast path:
         var currentPosition = currentPosition
-        val closingQuote = source.indexOf('"', currentPosition)
+//        val closingQuote = source.indexOf('"', currentPosition)
 
 
         val startPosition = currentPosition - 1
