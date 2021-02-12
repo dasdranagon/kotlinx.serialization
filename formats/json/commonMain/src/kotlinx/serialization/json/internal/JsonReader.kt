@@ -294,13 +294,11 @@ internal class JsonReader(private val source: String) {
          * 1) measure the indexOf after the substring vs loop
          * 2) measure backwards iteration for better cache locality
          */
-//        for (i in currentPosition until closingQuote) {
-//            if (source[i] == '\\') TODO()
-//        }
-        val r = source.substring(currentPosition, closingQuote)
-        if (r.indexOf('\\') != -1) TODO()
+        for (i in closingQuote - 1 downTo currentPosition ) {
+            if (source[i] == '\\') TODO()
+        }
         this.currentPosition = closingQuote + 1
-        return r
+        return source.substring(currentPosition, closingQuote)
     }
 
     private fun nextString(source: String, startPosition: Int) {
