@@ -144,25 +144,22 @@ internal class JsonReader(private val source: String) {
     }
 
     fun canConsumeValue(): Boolean {
-        while (currentPosition < source.length) {
-            val ch = source[currentPosition]
-            return when (charToTokenClass(ch)) {
-                TC_WHITESPACE -> {
-                    ++currentPosition
-                    continue
-                }
-                TC_BEGIN_LIST, TC_BEGIN_OBJ, TC_OTHER, TC_STRING -> {
-                    true
-                }
-                else -> {
-                    false
-                }
+        var current = currentPosition
+        while (current < source.length) {
+            val c = source[current]
+            if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+                ++current
+                continue
             }
+            val tc = charToTokenClass(c)
+            currentPosition = current
+            return tc == TC_STRING || tc ==  TC_OTHER || tc == TC_BEGIN_LIST || tc == TC_BEGIN_OBJ
         }
+        currentPosition = current
         return false
     }
 
-    private var peekedString: String? = null // Only valuues are peeked
+    private var peekedString: String? = null // Only values are peeked for now
     private var length = 0 // length of string
     private var buf = CharArray(16) // only used for strings with escapes
 
