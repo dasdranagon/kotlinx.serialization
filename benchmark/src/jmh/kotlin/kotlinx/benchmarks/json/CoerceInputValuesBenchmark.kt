@@ -13,7 +13,7 @@ import java.util.concurrent.*
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @State(Scope.Benchmark)
-//@Fork(2)
+@Fork(2)
 open class CoerceInputValuesBenchmark {
 
     // Specific benchmark to isolate effect on #1156. Remove after release of 1.0.1
