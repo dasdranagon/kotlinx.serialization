@@ -76,21 +76,9 @@ internal open class StreamingJsonDecoder(
             checkLeadingComma()
         }
         return when (mode) {
-            WriteMode.LIST -> decodeListIndex()
+            WriteMode.OBJ -> decodeObjectIndex(descriptor)
             WriteMode.MAP -> decodeMapIndex()
-            WriteMode.POLY_OBJ -> {
-                when (++currentIndex) {
-                    0 -> 0
-                    1 -> {
-                        reader.tryConsumeComma()
-                        1
-                    }
-                    else -> {
-                        CompositeDecoder.DECODE_DONE
-                    }
-                }
-            }
-            else -> decodeObjectIndex(descriptor)
+            else -> decodeListIndex()
         }
     }
 

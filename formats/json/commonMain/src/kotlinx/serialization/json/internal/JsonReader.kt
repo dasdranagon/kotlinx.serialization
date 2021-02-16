@@ -270,10 +270,10 @@ internal class JsonReader(private val source: String) {
         }
 
         consumeNextToken(TC_STRING)
+        var currentPosition = currentPosition
         if (currentPosition >= source.length) {
             fail("EOF", currentPosition)
         }
-        var currentPosition = currentPosition
         val startPosition = currentPosition - 1
         var lastPosition = currentPosition
         length = 0
@@ -310,6 +310,7 @@ internal class JsonReader(private val source: String) {
         consumeNextToken(TC_STRING)
         val current = currentPosition
         val closingQuote = source.indexOf('"', current)
+        // Unhappy path, should never happen
         if (closingQuote == -1) fail("Expected quoted string literal")
 
         // TODO explain
