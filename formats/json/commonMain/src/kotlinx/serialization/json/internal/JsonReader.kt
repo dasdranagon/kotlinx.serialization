@@ -9,8 +9,6 @@ import kotlinx.serialization.json.internal.CharMappings.ESCAPE_2_CHAR
 import kotlin.jvm.*
 
 internal const val lenientHint = "Use 'isLenient = true' in 'Json {}` builder to accept non-compliant JSON."
-internal const val coerceInputValuesHint =
-    "Use 'coerceInputValues = true' in 'Json {}` builder to coerce nulls to default values."
 internal const val specialFlowingValuesHint =
     "It is possible to deserialize them using 'JsonBuilder.allowSpecialFloatingPointValues = true'"
 internal const val ignoreUnknownKeysHint = "Use 'ignoreUnknownKeys = true' in 'Json {}' builder to ignore unknown keys."
@@ -173,12 +171,12 @@ internal class JsonReader(private val source: String) {
     fun consumeNextToken(expected: Byte): Byte {
         val token = consumeNextToken()
         if (token != expected) {
-            fail(expected, token)
+            fail(expected)
         }
         return token
     }
 
-    private fun fail(expectedToken: Byte, actualToken: Byte) {
+    private fun fail(expectedToken: Byte) {
         // We know that the token was consumed prior to this call
         // Slow path, never called in normal code, can avoid optimizing it
         val expected = when (expectedToken) {
@@ -223,7 +221,9 @@ internal class JsonReader(private val source: String) {
     }
 
     /**
-     * TODO explain
+     * Tries to consume `null` token from input.
+     * Returns `true` if the next 4 chars in input are not `null`,
+     * `false` otherwise and consumes it.
      */
     fun tryConsumeNotNull(): Boolean {
         val current = skipWhitespaces()
@@ -240,6 +240,7 @@ internal class JsonReader(private val source: String) {
         // Skip whitespaces
         while (current < source.length) {
             val c = source[current]
+            // Faster than char2TokenClass actually
             if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
                 ++current
             } else {
