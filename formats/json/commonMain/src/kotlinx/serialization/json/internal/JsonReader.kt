@@ -44,15 +44,20 @@ internal const val TC_BEGIN_OBJ: Byte = 6
 internal const val TC_END_OBJ: Byte = 7
 internal const val TC_BEGIN_LIST: Byte = 8
 internal const val TC_END_LIST: Byte = 9
-internal const val TC_NULL: Byte = 10
-internal const val TC_INVALID: Byte = 11
-internal const val TC_EOF: Byte = 12
+internal const val TC_EOF: Byte = 10
+internal const val TC_INVALID: Byte = Byte.MAX_VALUE
 
 // mapping from chars to token classes
 private const val CTC_MAX = 0x7e
 
 // mapping from escape chars real chars
 private const val ESC2C_MAX = 0x75
+
+/*
+ * In ASCII representation, upper and lower case letters are different
+ * in 6-th bit and we leverage this fact
+ */
+private const val asciiCaseMask = 1 shl 5
 
 // object instead of @SharedImmutable because there is mutual initialization in [initC2ESC] and [initC2TC]
 internal object CharMappings {
@@ -130,7 +135,6 @@ internal class JsonReader(private val source: String) {
     fun tryConsumeComma(): Boolean {
         skipWhitespaces()
         val current = currentPosition
-        // TODO throw EOF?
         if (current == source.length) return false
         if (charToTokenClass(source[current]) == TC_COMMA) {
             ++currentPosition
@@ -147,7 +151,7 @@ internal class JsonReader(private val source: String) {
                     ++currentPosition
                     continue
                 }
-                TC_BEGIN_LIST, TC_BEGIN_OBJ, TC_OTHER, TC_STRING, TC_NULL -> {
+                TC_BEGIN_LIST, TC_BEGIN_OBJ, TC_OTHER, TC_STRING -> {
                     true
                 }
                 else -> {
@@ -158,12 +162,7 @@ internal class JsonReader(private val source: String) {
         return false
     }
 
-    // updated by nextToken
-    // TODO remove
-    private var tokenPosition: Int = 0
-
-    // update by nextString/nextLiteral
-    private var offset = -1 // when offset >= 0 string is in source, otherwise in buf
+    private var peekedString: String? = null // Only valuues are peeked
     private var length = 0 // length of string
     private var buf = CharArray(16) // only used for strings with escapes
 
@@ -173,6 +172,31 @@ internal class JsonReader(private val source: String) {
             fail(errorMessage(token.toChar()), currentPosition)
         }
         return token
+    }
+
+    fun consumeNextToken(expected: Byte): Byte {
+        val token = consumeNextToken()
+        if (token != expected) {
+            fail(expected, token)
+        }
+        return token
+    }
+
+    private fun fail(expectedToken: Byte, actualToken: Byte) {
+        // We know that the token was consumed prior to this call
+        // Slow path, never called in normal code, can avoid optimizing it
+        val expected = when (expectedToken) {
+            TC_STRING -> "quotation mark '\"'"
+            TC_COMMA -> "comma ','"
+            TC_COLON -> "semicolon ':'"
+            TC_BEGIN_OBJ -> "start of the object '{'"
+            TC_END_OBJ -> "end of the object '}'"
+            TC_BEGIN_LIST -> "start of the array '['"
+            TC_END_LIST -> "end of the array ']'"
+            else -> "valid token" // should never happen
+        }
+
+        fail("Expected $expected, but had '${source[currentPosition - 1]}' instead", currentPosition)
     }
 
     fun peekNextToken(): Byte {
@@ -219,41 +243,35 @@ internal class JsonReader(private val source: String) {
     private fun skipWhitespaces() {
         var current = currentPosition
         // Skip whitespaces
-        while (charToTokenClass(source[current]) == TC_WHITESPACE) {
+        while (current < source.length && charToTokenClass(source[current]) == TC_WHITESPACE) {
             ++current
         }
         currentPosition = current
     }
 
-    //        var current = currentPosition
-//        if (current >= source.length) {
-//            fail("EOF", currentPosition)
-//        }
+    fun peekString(isLenient: Boolean): String? {
+        val token = peekNextToken()
+        val string = if (isLenient) {
+            if (token != TC_STRING && token != TC_OTHER) return null
+            consumeStringLenient()
+        } else {
+            if (token != TC_STRING) return null
+            consumeString()
+        }
+        peekedString = string
+        return string
+    }
 
-    // TODO consider reusing string builder via setLength(0)
-//        val sb = StringBuilder()
-//        var currentChar = source[current]
-//        while (currentChar != STRING) {
-//            if (currentChar == STRING_ESC) {
-//                TODO() // fail for a while
-//            } else if (++current >= source.length) {
-//                TODO() // TODO better exception message
-////                fail("EOF", currentPosition)
-//            }
-//            sb.append(currentChar)
-//            currentChar = source[current]
-//        }
-//        currentPosition = current + 1 // Consume last quotation mark as well
-//        return sb.toString()
-    // TODO this is a strict version
     fun consumeString(): String {
-        consumeNextToken(TC_STRING) { "Expected quoted string" }
-        // TODO verify that this approach is actually faster
-        // Fast path:
+        if (peekedString != null) {
+            return takePeeked()
+        }
+
+        consumeNextToken(TC_STRING)
+        if (currentPosition >= source.length) {
+            fail("EOF", currentPosition)
+        }
         var currentPosition = currentPosition
-//        val closingQuote = source.indexOf('"', currentPosition)
-
-
         val startPosition = currentPosition - 1
         var lastPosition = currentPosition
         length = 0
@@ -280,107 +298,99 @@ internal class JsonReader(private val source: String) {
         return string
     }
 
-    fun consumeKeyString(): String {
-        consumeNextToken(TC_STRING) { "Expected quoted string" }
-        // TODO verify that this approach is actually faster
-        // Fast path:
-        val currentPosition = currentPosition
-        val closingQuote = source.indexOf('"', currentPosition)
-        if (closingQuote == -1) // TODO error
-            TODO()
+    private fun takePeeked(): String {
+        return peekedString!!.also { peekedString = null }
+    }
 
-        /*
-         * TODO:
-         * 1) measure the indexOf after the substring vs loop
-         * 2) measure backwards iteration for better cache locality
-         */
-        for (i in currentPosition until closingQuote) {
+    fun consumeKeyString(): String {
+        consumeNextToken(TC_STRING)
+        val current = currentPosition
+        val closingQuote = source.indexOf('"', current)
+        if (closingQuote == -1) fail("Expected quoted string literal")
+
+        // TODO explain
+        for (i in current until closingQuote) {
             if (source[i] == '\\') TODO()
         }
         this.currentPosition = closingQuote + 1
-        return source.substring(currentPosition, closingQuote)
-    }
-
-    private fun nextString(source: String, startPosition: Int) {
-        tokenPosition = startPosition
-        length = 0 // in buffer
-        var currentPosition = startPosition + 1 // skip starting "
-        // except if the input ends
-        if (currentPosition >= source.length) {
-            fail("EOF", currentPosition)
-        }
-        var lastPosition = currentPosition
-        while (source[currentPosition] != STRING) {
-            if (source[currentPosition] == STRING_ESC) {
-                appendRange(source, lastPosition, currentPosition)
-                val newPosition = appendEsc(source, currentPosition + 1)
-                currentPosition = newPosition
-                lastPosition = newPosition
-            } else if (++currentPosition >= source.length) {
-                fail("EOF", currentPosition)
-            }
-        }
-        if (lastPosition == startPosition + 1) {
-            // there was no escaped chars
-            offset = lastPosition
-            this.length = currentPosition - lastPosition
-        } else {
-            // some escaped chars were there
-            appendRange(source, lastPosition, currentPosition)
-            this.offset = -1
-        }
-        this.currentPosition = currentPosition + 1
-//        tokenClass = TC_STRING
+        return source.substring(current, closingQuote)
     }
 
     // Allows to consume unquoted string
     fun consumeStringLenient(): String {
-        // TODO figure out all the EOFs
+        if (peekedString != null) {
+            return takePeeked()
+        }
         skipWhitespaces()
         var current = currentPosition
         // Skip leading quotation mark
-        if (source[current] == '"') ++current
+        val token = charToTokenClass(source[current])
+        if (token == TC_STRING) {
+            return consumeString()
+        }
+
+        if (token != TC_OTHER) {
+            fail("Expected beginning of the string, but got ${source[current]}")
+        }
+
         while (current < source.length && charToTokenClass(source[current]) == TC_OTHER) {
-            current++
+            ++current
         }
         val result = source.substring(currentPosition, current)
         // Skip trailing quotation
-        if (current == source.length) {
-            currentPosition = current
-        } else {
-            currentPosition = if (source[current] == '"') ++current else current
-
-        }
+        currentPosition = current
         return result
     }
 
-    private fun nextLiteral(source: String, startPos: Int) {
-        tokenPosition = startPos
-        offset = startPos
-        var currentPosition = startPos
-        while (currentPosition < source.length && charToTokenClass(source[currentPosition]) == TC_OTHER) {
-            currentPosition++
-        }
-        this.currentPosition = currentPosition
-        length = currentPosition - offset
-//        tokenClass = if (rangeEquals(source, offset, length, NULL)) TC_NULL else TC_OTHER
-    }
-
-
-    // TODO doesn't work
-    fun peekString(isLenient: Boolean): String? {
-//        return if (tokenClass != TC_STRING && (!isLenient || tokenClass != TC_OTHER)) null
-//        else takeStringInternal(advance = false)
-        TODO()
-    }
-
-    private fun takeStringInternal(advance: Boolean = true): String {
-        val prevStr = if (offset < 0)
-            buf.concatToString(0, 0 + length) else
-            source.substring(offset, offset + length)
-        if (advance) nextToken()
-        return prevStr
-    }
+//    fun consumeBoolean(allowQuotation: Boolean): Boolean {
+//        skipWhitespaces()
+//        var current = currentPosition
+////        var hasQuote = false
+////        if (allowQuotation && source[current] == STRING) {
+////            hasQuote = true
+////            ++current
+////        }
+//
+//        // TODO handle EOF
+//        val result = when (source[current++].toInt() or asciiCaseMask) {
+//            't'.toInt() -> {
+//                if (source.length - current < 3) fail("")
+//                val r = source[current + 0].toInt() or asciiCaseMask == 'r'.toInt()
+//                val u = source[current + 1].toInt() or asciiCaseMask == 'u'.toInt()
+//                val e = source[current + 2].toInt() or asciiCaseMask == 'e'.toInt()
+//                if (!(r and u and e)) fail("")
+//
+////                for ((i, c) in "rue".withIndex()) {
+////                    if (c.toInt() != source[current + i].toInt() or asciiCaseMask) {
+////                        fail("")
+////                    }
+////                }
+//                currentPosition += 4
+//                true
+//            }
+//            'f'.toInt() -> {
+//                if (source.length - current < 4) fail("")
+//                val a = source[current + 0].toInt() or asciiCaseMask == 'a'.toInt()
+//                val l = source[current + 1].toInt() or asciiCaseMask == 'l'.toInt()
+//                val s = source[current + 2].toInt() or asciiCaseMask == 's'.toInt()
+//                val e = source[current + 3].toInt() or asciiCaseMask == 'e'.toInt()
+//                if (!(a and l and s and e)) fail("")
+////                for ((i, c) in "alse".withIndex()) {
+////                    if (c.toInt() != source[current + i].toInt() or asciiCaseMask) {
+////                        fail("")
+////                    }
+////                }
+//                currentPosition += 5
+//                false
+//            }
+//            else -> TODO()
+//        }
+//
+////        if (hasQuote) {
+////
+////        }
+//        return result
+//    }
 
     private fun append(ch: Char) {
         if (length >= buf.size) buf = buf.copyOf(2 * buf.size)
@@ -389,12 +399,12 @@ internal class JsonReader(private val source: String) {
 
     // initializes buf usage upon the first encountered escaped char
     private fun appendRange(source: String, fromIndex: Int, toIndex: Int) {
-        val addLen = toIndex - fromIndex
-        val oldLen = length
-        val newLen = oldLen + addLen
-        if (newLen > buf.size) buf = buf.copyOf(newLen.coerceAtLeast(2 * buf.size))
-        for (i in 0 until addLen) buf[oldLen + i] = source[fromIndex + i]
-        length += addLen
+        val addLength = toIndex - fromIndex
+        val oldLength = length
+        val newLength = oldLength + addLength
+        if (newLength > buf.size) buf = buf.copyOf(newLength.coerceAtLeast(2 * buf.size))
+        for (i in 0 until addLength) buf[oldLength + i] = source[fromIndex + i]
+        length += addLength
     }
 
     private fun appendEsc(source: String, startPosition: Int): Int {
@@ -423,41 +433,45 @@ internal class JsonReader(private val source: String) {
     }
 
     fun skipElement() {
-        TODO()
-//        if (tokenClass != TC_BEGIN_OBJ && tokenClass != TC_BEGIN_LIST) {
-//            nextToken()
-//            return
-//        }
-//        val tokenStack = mutableListOf<Byte>()
-//        do {
-//            when (tokenClass) {
-//                TC_BEGIN_LIST, TC_BEGIN_OBJ -> tokenStack.add(tokenClass)
-//                TC_END_LIST -> {
-//                    if (tokenStack.last() != TC_BEGIN_LIST) throw JsonDecodingException(
-//                        currentPosition,
-//                        "found ] instead of }",
-//                        source
-//                    )
-//                    tokenStack.removeAt(tokenStack.size - 1)
-//                }
-//                TC_END_OBJ -> {
-//                    if (tokenStack.last() != TC_BEGIN_OBJ) throw JsonDecodingException(
-//                        currentPosition,
-//                        "found } instead of ]",
-//                        source
-//                    )
-//                    tokenStack.removeAt(tokenStack.size - 1)
-//                }
-//            }
-//            nextToken()
-//        } while (tokenStack.isNotEmpty())
+        val tokenStack = mutableListOf<Byte>()
+        var lastToken = peekNextToken()
+        if (lastToken != TC_BEGIN_LIST && lastToken != TC_BEGIN_OBJ) {
+            consumeStringLenient()
+            return
+        }
+        while (true) {
+            lastToken = consumeNextToken()
+            when (lastToken) {
+                TC_BEGIN_LIST, TC_BEGIN_OBJ -> {
+                    tokenStack.add(lastToken)
+                }
+                TC_END_LIST -> {
+                    if (tokenStack.last() != TC_BEGIN_LIST) throw JsonDecodingException(
+                        currentPosition,
+                        "found ] instead of }",
+                        source
+                    )
+                    tokenStack.removeAt(tokenStack.size - 1)
+                    if (tokenStack.size == 0) return
+                }
+                TC_END_OBJ -> {
+                    if (tokenStack.last() != TC_BEGIN_OBJ) throw JsonDecodingException(
+                        currentPosition,
+                        "found } instead of ]",
+                        source
+                    )
+                    tokenStack.removeAt(tokenStack.size - 1)
+                    if (tokenStack.size == 0) return
+                }
+            }
+        }
     }
 
     override fun toString(): String {
-        return "JsonReader(source='$source', currentPosition=$currentPosition, tokenPosition=$tokenPosition, offset=$offset)"
+        return "JsonReader(source='$source', currentPosition=$currentPosition)"
     }
 
-    public fun fail(message: String, position: Int = currentPosition): Nothing {
+    fun fail(message: String, position: Int = currentPosition): Nothing {
         throw JsonDecodingException(position, message, source)
     }
 
@@ -473,34 +487,5 @@ internal class JsonReader(private val source: String) {
             in 'A'..'F' -> curChar.toInt() - 'A'.toInt() + 10
             else -> fail("Invalid toHexChar char '$curChar' in unicode escape")
         }
-    }
-
-    // TODO this one lookaheads too much
-    fun nextToken() {
-        val source = source
-        var currentPosition = currentPosition
-        while (currentPosition < source.length) {
-            val ch = source[currentPosition]
-            when (val tc = charToTokenClass(ch)) {
-                TC_WHITESPACE -> currentPosition++ // skip whitespace
-                TC_OTHER -> {
-                    nextLiteral(source, currentPosition)
-                    return
-                }
-                TC_STRING -> {
-                    nextString(source, currentPosition)
-                    return
-                }
-                else -> {
-                    this.tokenPosition = currentPosition
-//                    this.tokenClass = tc
-                    this.currentPosition = currentPosition + 1
-                    return
-                }
-            }
-        }
-
-        tokenPosition = currentPosition
-//        tokenClass = TC_EOF
     }
 }

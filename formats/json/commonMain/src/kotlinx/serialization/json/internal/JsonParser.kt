@@ -13,13 +13,13 @@ internal class JsonParser(
     private val isLenient = configuration.isLenient
 
     private fun readObject(): JsonElement {
-        var lastToken = reader.consumeNextToken(TC_BEGIN_OBJ) { "Expected start of the object, but had $it" }
+        var lastToken = reader.consumeNextToken(TC_BEGIN_OBJ)
         if (reader.peekNextToken() == TC_COMMA) reader.fail("Unexpected leading comma")
         val result = linkedMapOf<String, JsonElement>()
         while (reader.canConsumeValue()) {
             // Read key and value
             val key = if (isLenient) reader.consumeStringLenient() else reader.consumeString()
-            reader.consumeNextToken(TC_COLON) { "Expected ':'" }
+            reader.consumeNextToken(TC_COLON)
             val element = read()
             result[key] = element
             // Verify the next token
@@ -38,7 +38,7 @@ internal class JsonParser(
     }
 
     private fun readArray(): JsonElement {
-        var lastToken = reader.consumeNextToken(TC_BEGIN_LIST) { "Expected start of the array" }
+        var lastToken = reader.consumeNextToken(TC_BEGIN_LIST)
         // Prohibit leading comma
         if (reader.peekNextToken() == TC_COMMA) reader.fail("Unexpected leading comma")
         val result = arrayListOf<JsonElement>()
@@ -52,7 +52,7 @@ internal class JsonParser(
         }
         // Check for the correct ending
         if (lastToken == TC_BEGIN_LIST) { // Case of empty object
-            reader.consumeNextToken(TC_END_LIST) { "Expected end of the array" }
+            reader.consumeNextToken(TC_END_LIST)
         } else if (lastToken == TC_COMMA) { // Trailing comma
             reader.fail("Unexpected trailing comma")
         }

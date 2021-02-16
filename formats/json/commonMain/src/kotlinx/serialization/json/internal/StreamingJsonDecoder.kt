@@ -34,20 +34,23 @@ internal open class StreamingJsonDecoder(
 
     override fun beginStructure(descriptor: SerialDescriptor): CompositeDecoder {
         val newMode = json.switchMode(descriptor)
-        reader.consumeNextToken(newMode.beginTc) { "Expected '${newMode.begin}'" }
+        reader.consumeNextToken(newMode.beginTc)
         return when (newMode) {
             WriteMode.LIST, WriteMode.MAP, WriteMode.POLY_OBJ -> StreamingJsonDecoder(
                 json,
                 newMode,
                 reader
             ) // need fresh cur index
-            else -> if (mode == newMode) this else
+            else -> if (mode == newMode) {
+                this
+            } else {
                 StreamingJsonDecoder(json, newMode, reader) // todo: reuse instance per mode
+            }
         }
     }
 
     override fun endStructure(descriptor: SerialDescriptor) {
-        reader.consumeNextToken(mode.endTc) { "Expected '${mode.end}', but had $it" }
+        reader.consumeNextToken(mode.endTc)
     }
 
     override fun decodeNotNullMark(): Boolean {
@@ -78,7 +81,10 @@ internal open class StreamingJsonDecoder(
             WriteMode.POLY_OBJ -> {
                 when (++currentIndex) {
                     0 -> 0
-                    1 -> 1
+                    1 -> {
+                        reader.tryConsumeComma()
+                        1
+                    }
                     else -> {
                         CompositeDecoder.DECODE_DONE
                     }
@@ -96,7 +102,7 @@ internal open class StreamingJsonDecoder(
                 hasComma = reader.tryConsumeComma()
             }
         } else {
-            reader.consumeNextToken(TC_COLON) { "Expected ':' after the key" }
+            reader.consumeNextToken(TC_COLON)
         }
 
         return if (reader.canConsumeValue()) {
@@ -116,14 +122,15 @@ internal open class StreamingJsonDecoder(
      */
     private fun coerceInputValue(descriptor: SerialDescriptor, index: Int): Boolean {
         val elementDescriptor = descriptor.getElementDescriptor(index)
-        // TODO
-        TODO()
-//        if (reader.tokenClass == TC_NULL && !elementDescriptor.isNullable) return true // null for non-nullable
+        if (!elementDescriptor.isNullable && !reader.tryConsumeNotNull()) return true
         if (elementDescriptor.kind == SerialKind.ENUM) {
             val enumValue = reader.peekString(configuration.isLenient)
                 ?: return false // if value is not a string, decodeEnum() will throw correct exception
             val enumIndex = elementDescriptor.getElementIndex(enumValue)
-            if (enumIndex == UNKNOWN_NAME) return true
+            if (enumIndex == UNKNOWN_NAME) {
+                reader.consumeString() // TODO explain
+                return true
+            }
         }
         return false
     }
@@ -133,12 +140,12 @@ internal open class StreamingJsonDecoder(
         while (reader.canConsumeValue()) {
             ++currentIndex // TODO verify it doesn't affect performance
             hasComma = false
-            // When decoding, all the whitespaces should be skipped
-            val key = reader.consumeKeyString()
-            reader.consumeNextToken(TC_COLON) { "Expected ':'" }
+            val key = decodeStringKey()
+            reader.consumeNextToken(TC_COLON)
             val index = descriptor.getElementIndex(key)
             val isUnknown = if (index != UNKNOWN_NAME) {
                 if (configuration.coerceInputValues && coerceInputValue(descriptor, index)) {
+                    hasComma = reader.tryConsumeComma()
                     false // skip known element
                 } else {
                     return index // read known element
@@ -147,13 +154,10 @@ internal open class StreamingJsonDecoder(
                 true // unknown element
             }
 
-            if (isUnknown) handleUnknown(key) // slow-path for unknown keys handling
-            // TODO handle it later
-            // Fallen through, meaning that it was an unknown key, should go to next
-//            if (token == TC_COMMA) {
-//                reader.nextToken()
-//                reader.require(reader.canBeginValue, reader.currentPosition) { "Unexpected trailing comma" }
-//            }
+            if (isUnknown) { // slow-path for unknown keys handling
+                handleUnknown(key)
+                hasComma = reader.tryConsumeComma()
+            }
         }
         if (hasComma) reader.fail("Unexpected trailing comma")
         return CompositeDecoder.DECODE_DONE
@@ -182,6 +186,7 @@ internal open class StreamingJsonDecoder(
         }
     }
 
+
     override fun decodeBoolean(): Boolean {
         /*
          * We prohibit non true/false boolean literals at all as it is considered way too error-prone,
@@ -195,6 +200,7 @@ internal open class StreamingJsonDecoder(
         }
         string.toBooleanStrictOrNull()?.let { return it }
         reader.fail("Failed to parse type 'boolean' for input '$string'")
+//        return reader.consumeBoolean(configuration.isLenient)
     }
 
     /*
@@ -220,8 +226,15 @@ internal open class StreamingJsonDecoder(
         reader.throwInvalidFloatingPointDecoded(result)
     }
 
-    // TODO bug here
     override fun decodeChar(): Char = reader.parseString("char") { single() }
+
+    private fun decodeStringKey(): String {
+        return if (configuration.isLenient) {
+            reader.consumeStringLenient()
+        } else {
+            reader.consumeKeyString()
+        }
+    }
 
     override fun decodeString(): String {
         return if (configuration.isLenient) {
