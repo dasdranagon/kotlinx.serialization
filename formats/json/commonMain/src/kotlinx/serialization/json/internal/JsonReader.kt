@@ -240,8 +240,13 @@ internal class JsonReader(private val source: String) {
     private fun skipWhitespaces() {
         var current = currentPosition
         // Skip whitespaces
-        while (current < source.length && charToTokenClass(source[current]) == TC_WHITESPACE) {
-            ++current
+        while (current < source.length) {
+            val c = source[current]
+            if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+                ++current
+            } else {
+                break
+            }
         }
         currentPosition = current
     }
