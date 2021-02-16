@@ -133,10 +133,9 @@ internal class JsonReader(private val source: String) {
     public val isDone: Boolean get() = consumeNextToken() == TC_EOF
 
     fun tryConsumeComma(): Boolean {
-        skipWhitespaces()
-        val current = currentPosition
+        val current = skipWhitespaces()
         if (current == source.length) return false
-        if (charToTokenClass(source[current]) == TC_COMMA) {
+        if (source[current] == ',') {
             ++currentPosition
             return true
         }
@@ -227,8 +226,7 @@ internal class JsonReader(private val source: String) {
      * TODO explain
      */
     fun tryConsumeNotNull(): Boolean {
-        skipWhitespaces()
-        val current = currentPosition
+        val current = skipWhitespaces()
         if (source.length - current < 4) return true
         for (i in 0..3) {
             if (NULL[i] != source[current + i]) return true
@@ -237,7 +235,7 @@ internal class JsonReader(private val source: String) {
         return false
     }
 
-    private fun skipWhitespaces() {
+    private fun skipWhitespaces(): Int {
         var current = currentPosition
         // Skip whitespaces
         while (current < source.length) {
@@ -249,6 +247,7 @@ internal class JsonReader(private val source: String) {
             }
         }
         currentPosition = current
+        return current
     }
 
     fun peekString(isLenient: Boolean): String? {
@@ -323,8 +322,7 @@ internal class JsonReader(private val source: String) {
         if (peekedString != null) {
             return takePeeked()
         }
-        skipWhitespaces()
-        var current = currentPosition
+        var current = skipWhitespaces()
         // Skip leading quotation mark
         val token = charToTokenClass(source[current])
         if (token == TC_STRING) {
